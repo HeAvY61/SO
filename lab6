@@ -1,0 +1,115 @@
+#include <iostream>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+#define NRPROCESE 10
+
+using namespace std;
+
+// Verifică dacă un număr este prim
+int ePrim(int x) {
+    if (x < 2) return 0;
+    for (int d = 2; d * d <= x; d++) {
+        if (x % d == 0) return 0;
+    }
+    return 1;
+}
+
+int main() {
+    int a, b; // Capetele intervalului curent
+    int i, j;
+    int pids[NRPROCESE]; // ID-urile proceselor copil
+    int pipes[2][2]; // Cele două pipe-uri
+    int dimens = 0; // Totalul de numere prime
+
+    // Crearea pipe-urilor
+    if (pipe(pipes[0]) == -1 || pipe(pipes[1]) == -1) {
+        cout << "Eroare la crearea pipe-urilor" << endl;
+        return 1;
+    }
+
+    // Crearea proceselor copil
+    for (i = 0; i < NRPROCESE; i++) {
+        pids[i] = fork();
+        if (pids[i] == -1) {
+            cout << "Eroare la crearea procesului" << endl;
+            return 2;
+        }
+
+        if (pids[i] == 0) { // Proces copil
+            close(pipes[0][1]);
+            close(pipes[1][0]);
+
+            if (read(pipes[0][0], &a, sizeof(a)) == -1 || read(pipes[0][0], &b, sizeof(b)) == -1) {
+                cout << "Eroare la citirea din pipe" << endl;
+                return 3;
+            }
+
+            int nrPrime[250];
+            int k = 0;
+
+            for (j = a; j <= b; j++) {
+                if (ePrim(j)) {
+                    nrPrime[k] = j;
+                    k++;
+                }
+            }
+
+            if (write(pipes[1][1], nrPrime, k * sizeof(int)) == -1) {
+                cout << "Eroare la scrierea în pipe" << endl;
+                return 4;
+            }
+
+            close(pipes[0][0]);
+            close(pipes[1][1]);
+            return 0; // Proces copil termină
+        }
+    }
+
+    // Procesul părinte
+    close(pipes[0][0]);
+    close(pipes[1][1]);
+
+    int buffer[25000]; // Buffer pentru stocarea numerelor prime
+    int index = 0;
+
+    for (i = 0; i < NRPROCESE; i++) {
+        a = i * 1000 + 1;
+        b = (i + 1) * 1000;
+
+        if (write(pipes[0][1], &a, sizeof(int)) == -1 || write(pipes[0][1], &b, sizeof(int)) == -1) {
+            cout << "Eroare la scrierea în pipe" << endl;
+            return 4;
+        }
+    }
+
+    close(pipes[0][1]);
+
+    // Citirea rezultatelor din procesele copil
+    for (i = 0; i < NRPROCESE; i++) {
+        int temp[250];
+        if (read(pipes[1][0], temp, sizeof(temp)) > 0) {
+            for (j = 0; temp[j] != 0; j++) {
+                buffer[index++] = temp[j];
+            }
+        }
+    }
+
+    cout << "Numerele prime din intervalul [1, 10000] sunt: " << endl;
+    for (i = 0; i < index; i++) {
+        cout << buffer[i] << " ";
+    }
+    cout << endl;
+
+    close(pipes[1][0]);
+
+    // Așteptarea proceselor copil
+    for (i = 0; i < NRPROCESE; i++) {
+        wait(NULL);
+    }
+
+    return 0;
+}
