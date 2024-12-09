@@ -1,0 +1,99 @@
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <vector>
+#include <chrono>
+
+enum ThreadType { ALB, NEGRU }; // Tipurile de fire
+
+class ResourceManager {
+private:
+    std::mutex mtx; // Protejează secțiunea critică
+    std::condition_variable cv; // Pentru sincronizare
+    int currentAlbThreads = 0; // Numărul de fire albe active
+    int currentNegruThreads = 0; // Numărul de fire negre active
+    int waitingAlbThreads = 0; // Fire albe în așteptare
+    int waitingNegruThreads = 0; // Fire negre în așteptare
+
+    ThreadType activeType = ALB; // Tipul de fire care dețin resursa
+    bool resourceInUse = false; // Resursa este în uz?
+
+public:
+    // Funcție pentru a solicita acces la resursă
+    void requestAccess(ThreadType type) {
+        std::unique_lock<std::mutex> lock(mtx);
+
+        if (type == ALB) {
+            waitingAlbThreads++;
+            cv.wait(lock, [&] { return !resourceInUse || activeType == ALB; });
+            waitingAlbThreads--;
+            currentAlbThreads++;
+        } else { // NEGRU
+            waitingNegruThreads++;
+            cv.wait(lock, [&] { return !resourceInUse || activeType == NEGRU; });
+            waitingNegruThreads--;
+            currentNegruThreads++;
+        }
+
+        resourceInUse = true;
+        activeType = type;
+    }
+
+    // Funcție pentru a elibera resursa
+    void releaseAccess(ThreadType type) {
+        std::unique_lock<std::mutex> lock(mtx);
+
+        if (type == ALB) {
+            currentAlbThreads--;
+        } else { // NEGRU
+            currentNegruThreads--;
+        }
+
+        // Verificăm dacă toate firele curente au terminat
+        if ((type == ALB && currentAlbThreads == 0) || (type == NEGRU && currentNegruThreads == 0)) {
+            resourceInUse = false;
+            cv.notify_all(); // Notificăm toate firele
+        }
+    }
+};
+
+// Mutex global pentru sincronizarea ieșirii în consolă
+std::mutex coutMutex;
+
+void threadFunction(ResourceManager& manager, ThreadType type, int id) {
+    manager.requestAccess(type);
+
+    {
+        // Blocăm mutex-ul pentru a scrie ieșirea
+        std::lock_guard<std::mutex> lock(coutMutex);
+        std::cout << (type == ALB ? "Firul alb " : "Firul negru ") << id << " folosește resursa.\n";
+    }
+
+    // Simularea utilizării resursei
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    manager.releaseAccess(type);
+}
+
+int main() {
+    const int NUM_THREADS = 10;
+    ResourceManager manager;
+
+    // Creăm fire
+    std::vector<std::thread> threads;
+    for (int i = 0; i < NUM_THREADS; ++i) {
+        if (i % 2 == 0) {
+            threads.emplace_back(threadFunction, std::ref(manager), ALB, i);
+        } else {
+            threads.emplace_back(threadFunction, std::ref(manager), NEGRU, i);
+        }
+    }
+
+    // Așteptăm finalizarea firelor
+    for (auto& t : threads) {
+        t.join();
+    }
+
+    return 0;
+}
